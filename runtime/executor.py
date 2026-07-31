@@ -32,7 +32,7 @@ class Executor:
         self.tools.register(Tool("write", "Write to a file.", self._write_file))
         self.tools.register(Tool("list", "List workspace files.", self._list_files))
         self.tools.register(Tool("run", "Run a Python file.", self._run_python))
-        self.tools.register(Tool("memory", "Show recent memory.", self._show_memory))
+        self.tools.register(Tool("memory", "Show recent memory or search it.", self._show_memory))
 
     def execute(self, plan: Plan) -> ExecutionResult:
         route = self.router.route(plan)
@@ -113,5 +113,18 @@ class Executor:
         return ExecutionResult(completed.returncode == 0, f"Ran: {path.relative_to(self.state.workspace.resolve())}", detail.strip())
 
     def _show_memory(self, args: list[str]) -> ExecutionResult:
-        lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in self.state.memory[-20:]]
+        if args and args[0].lower() in {"search", "find"}:
+            if len(args) < 2:
+                return ExecutionResult(False, "Usage: memory search <text>")
+            query = " ".join(args[1:]).strip()
+            matches = self.state.memory_backend.search(query)
+            lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in matches[-20:]]
+            self.state.record("memory_search", "success", query)
+            return ExecutionResult(True, f"Memory search: {query}", "\n".join(lines) if lines else "No matches.")
+
+        limit = 20
+        if args and args[0].isdigit():
+            limit = max(1, int(args[0]))
+        lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in self.state.memory[-limit:]]
+        self.state.record("memory", "success", f"limit={limit}")
         return ExecutionResult(True, "Recent memory:", "\n".join(lines) if lines else "No memory yet.")
