@@ -1,7 +1,10 @@
 {
-  "version": "0.1",
+  "version": "0.2",
   "required_components": [
+    "ATLAS_RULES.md",
     "atlas.py",
+    "scripts/verify_atlas.py",
+    "scripts/change_guard.py",
     "runtime/planner.py",
     "runtime/executor.py",
     "runtime/agent_loop.py",
