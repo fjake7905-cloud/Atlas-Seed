@@ -8,6 +8,7 @@ from typing import Iterable
 
 
 REQUIRED_FILES = [
+    "ATLAS_RULES.md",
     "atlas.py",
     ".gitignore",
     "runtime/__init__.py",
@@ -26,6 +27,7 @@ REQUIRED_FILES = [
 ]
 
 REQUIRED_MARKERS = {
+    "ATLAS_RULES.md": ["Core workflow", "Change policy", "Project direction"],
     "atlas.py": ["BaseAgent", "AgentLoop", "AppState.load"],
     "runtime/planner.py": ["class Planner", "def plan"],
     "runtime/executor.py": ["class Executor", "def execute"],
