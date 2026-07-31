@@ -1,16 +1,21 @@
 {
-  "version": "0.3",
+  "version": "0.4",
   "required_components": [
     "ATLAS_RULES.md",
     "atlas.py",
     "scripts/verify_atlas.py",
     "scripts/change_guard.py",
+    "runtime/state.py",
     "runtime/planner.py",
     "runtime/executor.py",
     "runtime/agent_loop.py",
     "runtime/memory.py",
     "agents/base_agent.py",
-    "core/tools.py"
+    "core/tools.py",
+    "tests/test_runtime.py",
+    "tests/test_tools.py",
+    "tests/test_memory.py",
+    "tests/test_agent_core.py"
   ],
   "verification_policy": {
     "every_new_feature_requires": [
