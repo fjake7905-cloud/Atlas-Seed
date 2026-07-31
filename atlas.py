@@ -40,7 +40,7 @@ def main() -> int:
                 "  write <file> <text>\n"
                 "  list\n"
                 "  run <python file>\n"
-                "  memory\n"
+                "  memory [search <text>]\n"
                 "  exit"
             )
             continue
