@@ -1,5 +1,5 @@
 {
-  "version": "0.2",
+  "version": "0.3",
   "required_components": [
     "ATLAS_RULES.md",
     "atlas.py",
@@ -8,7 +8,9 @@
     "runtime/planner.py",
     "runtime/executor.py",
     "runtime/agent_loop.py",
-    "agents/base_agent.py"
+    "runtime/memory.py",
+    "agents/base_agent.py",
+    "core/tools.py"
   ],
   "verification_policy": {
     "every_new_feature_requires": [
