@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
+from agents.base_agent import BaseAgent
+from runtime.agent_loop import AgentLoop
 from runtime.executor import Executor
 from runtime.planner import Planner
 from runtime.state import AppState
@@ -10,10 +9,10 @@ from runtime.state import AppState
 
 def main() -> int:
     state = AppState.load()
-    planner = Planner()
-    executor = Executor(state)
+    agent = BaseAgent(state=state, planner=Planner(), executor=Executor(state))
+    loop = AgentLoop(agent)
 
-    print("Atlas Seed v0.1")
+    print("Atlas Seed v0.2")
     print(f"Workspace: {state.workspace.resolve()}")
     print('Type "help" for commands, or "exit" to quit.')
 
@@ -46,11 +45,8 @@ def main() -> int:
             )
             continue
 
-        plan = planner.plan(raw)
-        result = executor.execute(plan)
-        print(result.message)
-        if result.detail:
-            print(result.detail)
+        step = loop.step(raw)
+        print(step.output_text)
 
     return 0
 
