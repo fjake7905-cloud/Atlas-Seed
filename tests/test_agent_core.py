@@ -20,19 +20,20 @@ class AgentCoreTests(unittest.TestCase):
                 os.chdir(tmp)
                 state = AppState.load()
                 executor = Executor(state)
+                tool_registry = executor.tools
                 agent = BaseAgent(state=state, planner=Planner(), executor=executor)
                 loop = AgentLoop(agent)
 
                 step = loop.step("create demo.py")
 
                 self.assertIn("Created:", step.output_text)
-                self.assertIn("create", executor.tools.list())
+                self.assertIn("create", tool_registry.list())
                 self.assertTrue((state.workspace / "demo.py").exists())
                 self.assertTrue((Path(tmp) / ".atlas" / "memory.json").exists())
 
                 reloaded = AppState.load()
                 self.assertGreaterEqual(len(reloaded.memory), 2)
-                self.assertTrue(any(item.get("action") == "create" for item in reloaded.memory))
+                self.assertTrue(any(item.get("action") == "create" for item in reloaded.memory), "persists_memory")
             finally:
                 os.chdir(cwd)
 
