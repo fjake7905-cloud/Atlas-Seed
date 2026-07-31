@@ -17,6 +17,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Run Atlas change guard
+        run: python scripts/change_guard.py
+
       - name: Run Atlas verification tool
         run: python scripts/verify_atlas.py
 
