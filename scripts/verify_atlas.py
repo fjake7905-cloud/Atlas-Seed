@@ -12,8 +12,8 @@ REQUIRED_FILES = [
     "atlas.py",
     ".gitignore",
     "runtime/__init__.py",
-    "runtime/state.py",
     "runtime/events.py",
+    "runtime/state.py",
     "runtime/planner.py",
     "runtime/router.py",
     "runtime/executor.py",
@@ -32,10 +32,10 @@ REQUIRED_FILES = [
 ]
 
 REQUIRED_MARKERS = {
-    "atlas.py": ["Atlas Seed", "workspace", "help"],
+    "atlas.py": ["Atlas Seed", "workspace", "help", "memory [search <text>]"],
     "runtime/state.py": ["class AppState", "memory_backend", "def record"],
     "runtime/planner.py": ["class Planner", "def plan"],
-    "runtime/executor.py": ["class Executor", "ToolRegistry", "def execute"],
+    "runtime/executor.py": ["class Executor", "ToolRegistry", "def execute", "memory_search"],
     "runtime/agent_loop.py": ["class AgentLoop", "def step"],
     "runtime/memory.py": ["class PersistentMemory", "def add"],
     "core/tools.py": ["class ToolRegistry", "def register", "def execute"],
