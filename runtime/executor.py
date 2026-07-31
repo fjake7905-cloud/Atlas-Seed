@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import subprocess
-from typing import Optional
 
-from core.capabilities import CapabilityResult, resolve_path
+from core.capabilities import resolve_path
+from core.tools import Tool, ToolRegistry
 from runtime.planner import Plan
 from runtime.state import AppState
 from runtime.router import Router
@@ -22,6 +21,18 @@ class Executor:
     def __init__(self, state: AppState) -> None:
         self.state = state
         self.router = Router()
+        self.tools = ToolRegistry()
+        self._register_tools()
+
+    def _register_tools(self) -> None:
+        self.tools.register(Tool("workspace_create", "Create a workspace folder.", self._workspace_create))
+        self.tools.register(Tool("workspace_show", "Show the active workspace.", self._workspace_show))
+        self.tools.register(Tool("create", "Create a file.", self._create_file))
+        self.tools.register(Tool("read", "Read a file.", self._read_file))
+        self.tools.register(Tool("write", "Write to a file.", self._write_file))
+        self.tools.register(Tool("list", "List workspace files.", self._list_files))
+        self.tools.register(Tool("run", "Run a Python file.", self._run_python))
+        self.tools.register(Tool("memory", "Show recent memory.", self._show_memory))
 
     def execute(self, plan: Plan) -> ExecutionResult:
         route = self.router.route(plan)
@@ -30,25 +41,15 @@ class Executor:
             return ExecutionResult(False, "Atlas needs a model for that request.")
 
         try:
-            if plan.action == "workspace_create":
-                return self._workspace_create(plan.args)
-            if plan.action == "workspace_show":
-                return ExecutionResult(True, "Current workspace:", str(self.state.workspace.resolve()))
-            if plan.action == "create":
-                return self._create_file(plan.args)
-            if plan.action == "read":
-                return self._read_file(plan.args)
-            if plan.action == "write":
-                return self._write_file(plan.args)
-            if plan.action == "list":
-                return self._list_files(plan.args)
-            if plan.action == "run":
-                return self._run_python(plan.args)
-            if plan.action == "memory":
-                return self._show_memory()
             if plan.action == "noop":
                 return ExecutionResult(True, "No command provided.")
-            return ExecutionResult(False, f"Unknown command: {plan.action}")
+            tool = self.tools.get(plan.action)
+            if tool is None:
+                return ExecutionResult(False, f"Unknown command: {plan.action}")
+            result = self.tools.execute(plan.action, plan.args)
+            if isinstance(result, ExecutionResult):
+                return result
+            return ExecutionResult(True, str(result))
         except Exception as exc:
             self.state.record(plan.action, "error", str(exc))
             return ExecutionResult(False, f"Error: {exc}")
@@ -60,6 +61,10 @@ class Executor:
         path.mkdir(parents=True, exist_ok=True)
         self.state.record("workspace_create", "success", str(path))
         return ExecutionResult(True, f"Workspace created: {path}")
+
+    def _workspace_show(self, args: list[str]) -> ExecutionResult:
+        self.state.record("workspace_show", "success", str(self.state.workspace))
+        return ExecutionResult(True, "Current workspace:", str(self.state.workspace.resolve()))
 
     def _create_file(self, args: list[str]) -> ExecutionResult:
         if not args:
@@ -81,7 +86,7 @@ class Executor:
 
     def _write_file(self, args: list[str]) -> ExecutionResult:
         if len(args) < 2:
-            return ExecutionResult(False, 'Usage: write <file> <text>')
+            return ExecutionResult(False, "Usage: write <file> <text>")
         path = resolve_path(self.state.workspace, args[0])
         text = " ".join(args[1:])
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -107,6 +112,6 @@ class Executor:
         detail = (completed.stdout or "") + (completed.stderr or "")
         return ExecutionResult(completed.returncode == 0, f"Ran: {path.relative_to(self.state.workspace.resolve())}", detail.strip())
 
-    def _show_memory(self) -> ExecutionResult:
+    def _show_memory(self, args: list[str]) -> ExecutionResult:
         lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in self.state.memory[-20:]]
         return ExecutionResult(True, "Recent memory:", "\n".join(lines) if lines else "No memory yet.")
