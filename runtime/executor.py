@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import subprocess
+import sys
 
 from core.capabilities import resolve_path
 from core.tools import Tool, ToolRegistry
@@ -107,10 +108,32 @@ class Executor:
         if not args:
             return ExecutionResult(False, "Usage: run <python file>")
         path = resolve_path(self.state.workspace, args[0])
-        completed = subprocess.run(["python", str(path)], capture_output=True, text=True, cwd=self.state.workspace)
-        self.state.record("run", "success" if completed.returncode == 0 else "failed", str(path))
-        detail = (completed.stdout or "") + (completed.stderr or "")
-        return ExecutionResult(completed.returncode == 0, f"Ran: {path.relative_to(self.state.workspace.resolve())}", detail.strip())
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(path)],
+                capture_output=True,
+                text=True,
+                cwd=self.state.workspace,
+                timeout=15,
+            )
+            self.state.record("run", "success" if completed.returncode == 0 else "failed", str(path))
+            detail = (completed.stdout or "") + (completed.stderr or "")
+            if len(detail) > 10000:
+                detail = detail[:10000] + "\n...[truncated 10KB limit]"
+            return ExecutionResult(
+                completed.returncode == 0,
+                f"Ran: {path.relative_to(self.state.workspace.resolve())}",
+                detail.strip(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            self.state.record("run", "timeout", str(path))
+            out = (exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")) if exc.stdout else ""
+            err = (exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")) if exc.stderr else ""
+            detail = (out + err).strip() or "Process timed out after 15s"
+            return ExecutionResult(False, f"Timeout: {path.relative_to(self.state.workspace.resolve())}", detail)
+        except Exception as exc:
+            self.state.record("run", "error", f"{path}: {exc}")
+            return ExecutionResult(False, f"Error running {path.relative_to(self.state.workspace.resolve())}: {exc}")
 
     def _show_memory(self, args: list[str]) -> ExecutionResult:
         if args and args[0].lower() in {"search", "find"}:
