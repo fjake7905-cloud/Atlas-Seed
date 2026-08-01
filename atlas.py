@@ -26,21 +26,18 @@ def get_version() -> str:
 
 
 def main() -> int:
-    # Check for --yes flag to auto-confirm dangerous ops
     auto_yes = "--yes" in os.sys.argv or os.getenv("ATLAS_AUTO_CONFIRM", "").lower() in {"1", "true", "yes"}
     state = AppState.load(auto_confirm=auto_yes)
     agent = BaseAgent(state=state, planner=Planner(), executor=Executor(state))
     loop = AgentLoop(agent)
 
     version = get_version()
-    # Keep marker "Atlas Seed" for verification
     print(f"Atlas Seed v{version}")
     print(f"Workspace: {state.workspace.resolve()}")
     print('Type "help" for commands, or "exit" to quit.')
     if state.auto_confirm:
         print('(Auto-confirm enabled for destructive operations)')
 
-    # Subscribe to capability confirmation events for logging
     def on_confirm_required(event):
         if not state.auto_confirm:
             print(f"[Security] Confirmation required for: {event.payload.get('action')}")
@@ -67,23 +64,33 @@ def main() -> int:
         if raw.lower() == "help":
             print(
                 "Commands:\n"
-                "  workspace create <name>\n"
-                "  workspace show\n"
-                "  create <file>\n"
-                "  read <file>\n"
-                "  write <file> <text>\n"
-                "  list\n"
-                "  run <python file>\n"
-                "  memory [search <text>]\n"
-                "  exit\n"
+                "  workspace create <name>  - Create sub-workspace\n"
+                "  workspace show           - Show current workspace path\n"
+                "  workspace list [path]    - List workspaces/folders\n"
+                "  workspace delete <name>  - Delete workspace folder\n"
+                "  create <file>            - Create empty file\n"
+                "  read <file>              - Read file content\n"
+                "  write <file> <text>      - Write to file (supports quoted strings, \\n)\n"
+                "  append <file> <text>     - Append to file\n"
+                "  delete <file>            - Delete file\n"
+                "  search <text> [path]     - Search text in files\n"
+                "  list [path]              - List files (ls)\n"
+                "  run <python file>        - Run Python file\n"
+                "  memory [search <text>]   - Show/search memory\n"
+                "  exit / quit              - Exit\n"
                 "Options:\n"
-                "  --yes : auto-confirm dangerous operations (write, run)\n"
+                "  --yes : auto-confirm dangerous operations (write, run, delete)\n"
+                "Examples:\n"
+                "  write notes.txt \"hello world\"\n"
+                "  write multi.txt \"line1\\nline2\\nline3\"\n"
+                "  append log.txt \"new entry\"\n"
+                "  search TODO\n"
+                "  read \"my file.txt\"\n"
             )
             continue
 
         step = loop.step(raw)
 
-        # Handle confirmation requirement
         if "Confirmation required" in step.output_text and not state.auto_confirm:
             print(step.output_text)
             try:
@@ -92,7 +99,6 @@ def main() -> int:
                 print("\nCancelled.")
                 continue
             if confirm in {"y", "yes"}:
-                # Temporarily enable auto_confirm and retry
                 state.auto_confirm = True
                 step = loop.step(raw)
                 state.auto_confirm = False
