@@ -1,5 +1,5 @@
 {
-  "version": "0.5",
+  "version": "0.6",
   "required_components": [
     "ATLAS_RULES.md",
     "atlas.py",
@@ -18,13 +18,16 @@
     "core/__init__.py",
     "core/capabilities.py",
     "core/tools.py",
+    "core/model_provider.py",
+    "core/context_builder.py",
     "agents/__init__.py",
     "agents/base_agent.py",
     "tests/test_runtime.py",
     "tests/test_tools.py",
     "tests/test_memory.py",
     "tests/test_agent_core.py",
-    "tests/test_security.py"
+    "tests/test_security.py",
+    "tests/test_model_provider.py"
   ],
   "verification_policy": {
     "every_new_feature_requires": [
