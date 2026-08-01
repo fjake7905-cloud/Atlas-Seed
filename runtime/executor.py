@@ -4,8 +4,9 @@ from dataclasses import dataclass
 import subprocess
 import sys
 
-from core.capabilities import resolve_path
+from core.capabilities import CapabilityRegistry, resolve_path
 from core.tools import Tool, ToolRegistry
+from runtime.events import Event
 from runtime.planner import Plan
 from runtime.state import AppState
 from runtime.router import Router
@@ -23,6 +24,7 @@ class Executor:
         self.state = state
         self.router = Router()
         self.tools = ToolRegistry()
+        self.capabilities = CapabilityRegistry()
         self._register_tools()
 
     def _register_tools(self) -> None:
@@ -35,24 +37,83 @@ class Executor:
         self.tools.register(Tool("run", "Run a Python file.", self._run_python))
         self.tools.register(Tool("memory", "Show recent memory or search it.", self._show_memory))
 
+    def _check_capability_confirmation(self, action: str) -> ExecutionResult | None:
+        """Check if action needs confirmation and if auto_confirm is set"""
+        if self.capabilities.needs_confirmation(action):
+            if not self.state.auto_confirm:
+                # Emit event for confirmation requirement
+                try:
+                    self.state.event_bus.emit(
+                        Event(name="capability.confirm.required", payload={"action": action, "dangerous": True})
+                    )
+                except Exception:
+                    pass
+                return ExecutionResult(
+                    False,
+                    f"Confirmation required for '{action}' (destructive). Use --yes, set ATLAS_AUTO_CONFIRM=1, or confirm interactively.",
+                )
+            else:
+                try:
+                    self.state.event_bus.emit(
+                        Event(name="capability.confirm.auto", payload={"action": action, "auto_confirm": True})
+                    )
+                except Exception:
+                    pass
+        return None
+
     def execute(self, plan: Plan) -> ExecutionResult:
+        try:
+            self.state.event_bus.emit(Event(name="tool.started", payload={"action": plan.action, "args": plan.args}))
+        except Exception:
+            pass
+
         route = self.router.route(plan)
         if route.target == "chat":
             self.state.record(plan.action, "needs-model", plan.args[0] if plan.args else "")
-            return ExecutionResult(False, "Atlas needs a model for that request.")
+            result = ExecutionResult(False, "Atlas needs a model for that request.")
+            try:
+                self.state.event_bus.emit(Event(name="tool.finished", payload={"action": plan.action, "success": False, "reason": "needs-model"}))
+            except Exception:
+                pass
+            return result
+
+        # Check capability confirmation before execution
+        confirm_result = self._check_capability_confirmation(plan.action)
+        if confirm_result is not None:
+            return confirm_result
 
         try:
             if plan.action == "noop":
-                return ExecutionResult(True, "No command provided.")
-            tool = self.tools.get(plan.action)
-            if tool is None:
-                return ExecutionResult(False, f"Unknown command: {plan.action}")
-            result = self.tools.execute(plan.action, plan.args)
-            if isinstance(result, ExecutionResult):
-                return result
-            return ExecutionResult(True, str(result))
+                result = ExecutionResult(True, "No command provided.")
+            else:
+                tool = self.tools.get(plan.action)
+                if tool is None:
+                    result = ExecutionResult(False, f"Unknown command: {plan.action}")
+                else:
+                    tool_result = self.tools.execute(plan.action, plan.args)
+                    if isinstance(tool_result, ExecutionResult):
+                        result = tool_result
+                    else:
+                        result = ExecutionResult(True, str(tool_result))
+
+            try:
+                self.state.event_bus.emit(
+                    Event(
+                        name="tool.finished",
+                        payload={"action": plan.action, "success": result.success, "message": result.message},
+                    )
+                )
+                self.state.event_bus.emit(Event(name=f"tool.{plan.action}.finished", payload={"success": result.success}))
+            except Exception:
+                pass
+
+            return result
         except Exception as exc:
             self.state.record(plan.action, "error", str(exc))
+            try:
+                self.state.event_bus.emit(Event(name="tool.failed", payload={"action": plan.action, "error": str(exc)}))
+            except Exception:
+                pass
             return ExecutionResult(False, f"Error: {exc}")
 
     def _workspace_create(self, args: list[str]) -> ExecutionResult:
@@ -120,19 +181,32 @@ class Executor:
             detail = (completed.stdout or "") + (completed.stderr or "")
             if len(detail) > 10000:
                 detail = detail[:10000] + "\n...[truncated 10KB limit]"
-            return ExecutionResult(
+            result = ExecutionResult(
                 completed.returncode == 0,
                 f"Ran: {path.relative_to(self.state.workspace.resolve())}",
                 detail.strip(),
             )
+            try:
+                self.state.event_bus.emit(Event(name="tool.run.finished", payload={"success": result.success, "path": str(path)}))
+            except Exception:
+                pass
+            return result
         except subprocess.TimeoutExpired as exc:
             self.state.record("run", "timeout", str(path))
             out = (exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")) if exc.stdout else ""
             err = (exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")) if exc.stderr else ""
             detail = (out + err).strip() or "Process timed out after 15s"
+            try:
+                self.state.event_bus.emit(Event(name="tool.run.timeout", payload={"path": str(path)}))
+            except Exception:
+                pass
             return ExecutionResult(False, f"Timeout: {path.relative_to(self.state.workspace.resolve())}", detail)
         except Exception as exc:
             self.state.record("run", "error", f"{path}: {exc}")
+            try:
+                self.state.event_bus.emit(Event(name="tool.run.failed", payload={"path": str(path), "error": str(exc)}))
+            except Exception:
+                pass
             return ExecutionResult(False, f"Error running {path.relative_to(self.state.workspace.resolve())}: {exc}")
 
     def _show_memory(self, args: list[str]) -> ExecutionResult:
