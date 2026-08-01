@@ -28,7 +28,8 @@
     "tests/test_memory.py",
     "tests/test_agent_core.py",
     "tests/test_security.py",
-    "tests/test_model_provider.py"
+    "tests/test_model_provider.py",
+    "tests/test_write_pipeline.py"
   ],
   "verification_policy": {
     "every_new_feature_requires": [
