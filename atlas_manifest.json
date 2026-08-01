@@ -15,6 +15,7 @@
     "runtime/task.py",
     "runtime/agent_loop.py",
     "runtime/memory.py",
+    "runtime/logger.py",
     "core/__init__.py",
     "core/capabilities.py",
     "core/tools.py",
