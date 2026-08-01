@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,27 +14,29 @@ from runtime.state import AppState
 class AgentCoreTests(unittest.TestCase):
     def test_agent_loop_uses_tool_registry_and_persists_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            cwd = Path.cwd()
-            try:
-                os.chdir(tmp)
-                state = AppState.load()
-                executor = Executor(state)
-                tool_registry = executor.tools
-                agent = BaseAgent(state=state, planner=Planner(), executor=executor)
-                loop = AgentLoop(agent)
+            state = AppState.load(root=Path(tmp))
+            executor = Executor(state)
+            tool_registry = executor.tools
+            agent = BaseAgent(state=state, planner=Planner(), executor=executor)
+            loop = AgentLoop(agent)
 
-                step = loop.step("create demo.py")
+            step = loop.step("create demo.py")
 
-                self.assertIn("Created:", step.output_text)
-                self.assertIn("create", tool_registry.list())
-                self.assertTrue((state.workspace / "demo.py").exists())
-                self.assertTrue((Path(tmp) / ".atlas" / "memory.json").exists())
+            self.assertIn("Created:", step.output_text)
+            self.assertIn("create", tool_registry.list())
+            self.assertTrue((state.workspace / "demo.py").exists())
+            self.assertTrue((Path(tmp) / ".atlas" / "memory.json").exists())
 
-                reloaded = AppState.load()
-                self.assertGreaterEqual(len(reloaded.memory), 2)
-                self.assertTrue(any(item.get("action") == "create" for item in reloaded.memory), "persists_memory")
-            finally:
-                os.chdir(cwd)
+            reloaded = AppState.load(root=Path(tmp))
+            self.assertGreaterEqual(len(reloaded.memory), 2)
+            self.assertTrue(any(item.get("action") == "create" for item in reloaded.memory), "persists_memory")
+
+            # Phase 2 hardening check: run tool now uses sys.executable + timeout
+            loop.step("create hello.py")
+            loop.step("write hello.py print('hello-atlas')")
+            run_step = loop.step("run hello.py")
+            self.assertIn("Ran:", run_step.output_text)
+            self.assertIn("hello-atlas", run_step.output_text)
 
 
 if __name__ == "__main__":
