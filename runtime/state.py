@@ -8,12 +8,8 @@ from typing import Any
 from runtime.events import Event, EventBus
 from runtime.memory import PersistentMemory
 
-# Model provider is optional to avoid circular imports, imported lazily
-# from core.model_provider import ModelProvider, get_default_provider
-
 
 def _resolve_base(root: Path | str | None = None) -> Path:
-    """Resolve base dir: explicit root > ATLAS_ROOT env > cwd"""
     if root is not None:
         return Path(root).resolve()
     env_root = os.getenv("ATLAS_ROOT")
@@ -66,13 +62,39 @@ class AppState:
         event_bus = EventBus()
         confirm = _resolve_auto_confirm(auto_confirm)
 
-        # Lazy import model provider to avoid circular
         try:
             from core.model_provider import get_default_provider
 
             provider = get_default_provider()
         except Exception:
             provider = None
+
+        # Setup logger and wire event_bus to logger
+        try:
+            from runtime.logger import get_logger, setup_logger
+
+            logger = setup_logger()
+
+            # Log all events to file via event_bus listener
+            def log_event(event):
+                try:
+                    logger.debug(f"Event: {event.name} payload={event.payload}")
+                except Exception:
+                    pass
+
+            event_bus.on("tool.started", log_event)
+            event_bus.on("tool.finished", log_event)
+            event_bus.on("tool.failed", log_event)
+            event_bus.on("task.created", log_event)
+            event_bus.on("task.finished", log_event)
+            event_bus.on("memory.added", log_event)
+            event_bus.on("model.called", log_event)
+            event_bus.on("model.response", log_event)
+            event_bus.on("capability.confirm.required", log_event)
+
+            logger.info(f"AppState loaded: root={base} workspace={workspace} auto_confirm={confirm} provider={getattr(provider, 'name', 'none')}")
+        except Exception:
+            pass
 
         return cls(
             workspace=workspace,
@@ -96,5 +118,11 @@ class AppState:
         try:
             self.event_bus.emit(Event(name="memory.added", payload=entry))
             self.event_bus.emit(Event(name=f"memory.{action}", payload=entry))
+        except Exception:
+            pass
+        try:
+            from runtime.logger import get_logger
+
+            get_logger().info(f"Record: {action}={status} detail={detail[:100]}")
         except Exception:
             pass
