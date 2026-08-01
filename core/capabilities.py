@@ -40,15 +40,20 @@ class CapabilityRegistry:
         self.register(Capability("create", "Create an empty file", needs_confirmation=False))
         self.register(Capability("read", "Read a file", needs_confirmation=False))
         self.register(Capability("list", "List workspace files", needs_confirmation=False))
+        self.register(Capability("search", "Search text in files", needs_confirmation=False))
+        self.register(Capability("append", "Append to a file", needs_confirmation=False))
         self.register(Capability("workspace_show", "Show workspace", needs_confirmation=False))
+        self.register(Capability("workspace_current", "Show current workspace", needs_confirmation=False))
+        self.register(Capability("workspace_list", "List workspaces", needs_confirmation=False))
         self.register(Capability("workspace_create", "Create workspace folder", needs_confirmation=False))
+        self.register(Capability("workspace_switch", "Switch workspace", needs_confirmation=False))
         self.register(Capability("memory", "Show memory", needs_confirmation=False))
 
         # Destructive operations - need confirmation in interactive mode
         self.register(Capability("write", "Write to a file (overwrites)", needs_confirmation=True))
         self.register(Capability("run", "Run a Python file (arbitrary code)", needs_confirmation=True))
-        self.register(Capability("delete", "Delete a file (future)", needs_confirmation=True))
-        self.register(Capability("workspace_delete", "Delete workspace (future)", needs_confirmation=True))
+        self.register(Capability("delete", "Delete a file", needs_confirmation=True))
+        self.register(Capability("workspace_delete", "Delete workspace", needs_confirmation=True))
 
     def register(self, cap: Capability) -> None:
         self._caps[cap.name] = cap

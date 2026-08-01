@@ -24,7 +24,6 @@ class Planner:
         if not raw_stripped:
             return Plan(action="noop", args=[], confidence=1.0, raw=raw, source="rule")
 
-        # Try shlex to handle quoted strings, fallback to split on error
         try:
             parts = shlex.split(raw_stripped)
         except ValueError:
@@ -35,14 +34,17 @@ class Planner:
 
         head = parts[0].lower()
 
-        # Workspace commands
+        # Workspace commands: create, show, list, delete, current, switch
         if head == "workspace" and len(parts) >= 2:
             sub = parts[1].lower()
-            if sub in {"create", "show", "list", "delete"}:
+            if sub in {"create", "show", "list", "delete", "current", "switch"}:
+                # Map current -> show, switch -> switch
+                if sub == "current":
+                    return Plan(action="workspace_show", args=parts[2:], confidence=1.0, raw=raw, source="rule")
                 return Plan(action=f"workspace_{sub}", args=parts[2:], confidence=1.0, raw=raw, source="rule")
             return Plan(action="chat", args=[raw], confidence=0.5, raw=raw, source="rule")
 
-        # File operations - rule-based high confidence
+        # File operations
         if head in {"create", "read", "write", "list", "run", "memory", "append", "delete", "search"}:
             return Plan(action=head, args=parts[1:], confidence=0.95, raw=raw, source="rule")
 
@@ -52,38 +54,30 @@ class Planner:
             return Plan(action="read", args=parts[1:], confidence=0.9, raw=raw, source="rule")
         if head in {"rm"}:
             return Plan(action="delete", args=parts[1:], confidence=0.9, raw=raw, source="rule")
+        if head in {"pwd", "whereami"}:
+            return Plan(action="workspace_show", args=[], confidence=0.9, raw=raw, source="rule")
 
-        # If we have model provider and rule didn't match, try LLM tool calling (Task 17)
         if self.model_provider is not None:
             llm_plan = self._plan_with_llm(raw_stripped)
             if llm_plan is not None:
                 return llm_plan
 
-        # Fallback to chat with low confidence
         return Plan(action="chat", args=[raw], confidence=0.4, raw=raw, source="rule")
 
     def _plan_with_llm(self, raw: str) -> Plan | None:
-        """Try to get tool call from LLM provider - Task 17"""
         if self.model_provider is None:
             return None
-
         try:
-            # Build a prompt asking for JSON tool call
             prompt = (
                 f"User request: {raw}\n"
                 "Available tools: create <file>, read <file>, write <file> <text>, append <file> <text>, "
-                "delete <file>, search <text>, list, run <file>, memory, workspace_create <name>, workspace_list\n"
+                "delete <file>, search <text>, list, run <file>, memory, workspace_create <name>, workspace_list, workspace_switch <name>\n"
                 "If request is a file operation, return JSON: {\"action\": \"tool_name\", \"args\": [\"arg1\", ...]}\n"
                 "If general question, return JSON: {\"action\": \"chat\", \"args\": [\"question\"]}\n"
                 "Return ONLY JSON, no explanation.\n"
             )
-
             response = self.model_provider.complete(prompt, context={"task": raw})
-
             text = response.text.strip()
-
-            # Try to extract JSON
-            # Find first { and last }
             start = text.find("{")
             end = text.rfind("}")
             if start != -1 and end != -1 and end > start:
@@ -93,7 +87,6 @@ class Planner:
                     action = data.get("action")
                     args = data.get("args", [])
                     if isinstance(action, str) and isinstance(args, list):
-                        # Validate action is known
                         known_actions = {
                             "create",
                             "read",
@@ -108,6 +101,7 @@ class Planner:
                             "workspace_show",
                             "workspace_list",
                             "workspace_delete",
+                            "workspace_switch",
                             "chat",
                             "noop",
                         }
@@ -121,10 +115,6 @@ class Planner:
                             )
                 except json.JSONDecodeError:
                     pass
-
-            # If response looks like already JSON tool call from RuleBasedProvider
-            # RuleBased returns {"action": "create", "args": [...]} directly
-            # Try parse whole text as JSON
             try:
                 data = json.loads(text)
                 action = data.get("action")
@@ -133,8 +123,6 @@ class Planner:
                     return Plan(action=action, args=[str(a) for a in args], confidence=0.7, raw=raw, source="llm")
             except Exception:
                 pass
-
         except Exception:
             pass
-
         return None
