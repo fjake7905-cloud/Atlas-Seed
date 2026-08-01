@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -7,29 +8,44 @@ from typing import Any
 from runtime.memory import PersistentMemory
 
 
-def app_dir() -> Path:
-    return Path.cwd() / ".atlas"
+def _resolve_base(root: Path | str | None = None) -> Path:
+    """Resolve base dir: explicit root > ATLAS_ROOT env > cwd"""
+    if root is not None:
+        return Path(root).resolve()
+    env_root = os.getenv("ATLAS_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
+    return Path.cwd().resolve()
 
 
-def workspace_dir() -> Path:
-    return Path.cwd() / "workspace"
+def app_dir(root: Path | str | None = None) -> Path:
+    return _resolve_base(root) / ".atlas"
 
 
-def memory_file() -> Path:
-    return app_dir() / "memory.json"
+def workspace_dir(root: Path | str | None = None) -> Path:
+    return _resolve_base(root) / "workspace"
+
+
+def memory_file(root: Path | str | None = None) -> Path:
+    return app_dir(root) / "memory.json"
 
 
 @dataclass
 class AppState:
     workspace: Path = field(default_factory=workspace_dir)
     memory_backend: PersistentMemory = field(default_factory=lambda: PersistentMemory(memory_file()))
+    root: Path = field(default_factory=lambda: _resolve_base(None))
 
     @classmethod
-    def load(cls) -> "AppState":
-        app_dir().mkdir(parents=True, exist_ok=True)
-        workspace = workspace_dir()
+    def load(cls, root: Path | str | None = None) -> "AppState":
+        base = _resolve_base(root)
+        a_dir = base / ".atlas"
+        a_dir.mkdir(parents=True, exist_ok=True)
+        workspace = base / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
-        return cls(workspace=workspace)
+        mem_file = a_dir / "memory.json"
+        memory_backend = PersistentMemory(mem_file)
+        return cls(workspace=workspace, memory_backend=memory_backend, root=base)
 
     @property
     def memory(self) -> list[dict[str, Any]]:
