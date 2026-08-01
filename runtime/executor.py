@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import subprocess
 import sys
+from pathlib import Path
 
 from core.capabilities import CapabilityRegistry, resolve_path
 from core.tools import Tool, ToolRegistry
@@ -30,18 +31,21 @@ class Executor:
     def _register_tools(self) -> None:
         self.tools.register(Tool("workspace_create", "Create a workspace folder.", self._workspace_create))
         self.tools.register(Tool("workspace_show", "Show the active workspace.", self._workspace_show))
+        self.tools.register(Tool("workspace_list", "List workspace folders.", self._workspace_list))
+        self.tools.register(Tool("workspace_delete", "Delete a workspace folder.", self._workspace_delete))
         self.tools.register(Tool("create", "Create a file.", self._create_file))
         self.tools.register(Tool("read", "Read a file.", self._read_file))
         self.tools.register(Tool("write", "Write to a file.", self._write_file))
+        self.tools.register(Tool("append", "Append to a file.", self._append_file))
+        self.tools.register(Tool("delete", "Delete a file.", self._delete_file))
+        self.tools.register(Tool("search", "Search text in workspace files.", self._search_files))
         self.tools.register(Tool("list", "List workspace files.", self._list_files))
         self.tools.register(Tool("run", "Run a Python file.", self._run_python))
         self.tools.register(Tool("memory", "Show recent memory or search it.", self._show_memory))
 
     def _check_capability_confirmation(self, action: str) -> ExecutionResult | None:
-        """Check if action needs confirmation and if auto_confirm is set"""
         if self.capabilities.needs_confirmation(action):
             if not self.state.auto_confirm:
-                # Emit event for confirmation requirement
                 try:
                     self.state.event_bus.emit(
                         Event(name="capability.confirm.required", payload={"action": action, "dangerous": True})
@@ -77,7 +81,6 @@ class Executor:
                 pass
             return result
 
-        # Check capability confirmation before execution
         confirm_result = self._check_capability_confirmation(plan.action)
         if confirm_result is not None:
             return confirm_result
@@ -128,6 +131,52 @@ class Executor:
         self.state.record("workspace_show", "success", str(self.state.workspace))
         return ExecutionResult(True, "Current workspace:", str(self.state.workspace.resolve()))
 
+    def _workspace_list(self, args: list[str]) -> ExecutionResult:
+        # List subfolders inside workspace
+        base = self.state.workspace
+        if args:
+            try:
+                base = resolve_path(self.state.workspace, args[0])
+            except Exception as e:
+                return ExecutionResult(False, f"Invalid path: {e}")
+        if not base.exists():
+            return ExecutionResult(False, f"Path not found: {base}")
+        entries = []
+        for item in sorted(base.iterdir()):
+            if item.is_dir():
+                entries.append(f"{item.name}/")
+        if not entries:
+            # Also list files if no dirs?
+            for item in sorted(base.iterdir()):
+                suffix = "/" if item.is_dir() else ""
+                entries.append(f"{item.name}{suffix}")
+        self.state.record("workspace_list", "success", str(base))
+        detail = "\n".join(entries) if entries else "(empty)"
+        return ExecutionResult(True, f"Workspace listing: {base.relative_to(self.state.workspace.resolve()) if base != self.state.workspace else '.'}", detail)
+
+    def _workspace_delete(self, args: list[str]) -> ExecutionResult:
+        if not args:
+            return ExecutionResult(False, "Usage: workspace delete <name>")
+        path = resolve_path(self.state.workspace, args[0])
+        if not path.exists():
+            return ExecutionResult(False, f"Workspace not found: {args[0]}")
+        if path.resolve() == self.state.workspace.resolve():
+            return ExecutionResult(False, "Cannot delete root workspace")
+        # Safety: only delete if inside workspace
+        try:
+            # Recursively delete
+            import shutil
+
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            self.state.record("workspace_delete", "success", str(path))
+            return ExecutionResult(True, f"Workspace deleted: {args[0]}")
+        except Exception as e:
+            self.state.record("workspace_delete", "failed", f"{path}: {e}")
+            return ExecutionResult(False, f"Failed to delete {args[0]}: {e}")
+
     def _create_file(self, args: list[str]) -> ExecutionResult:
         if not args:
             return ExecutionResult(False, "Usage: create <file>")
@@ -146,24 +195,136 @@ class Executor:
         self.state.record("read", "success", str(path))
         return ExecutionResult(True, f"Read: {path.relative_to(self.state.workspace.resolve())}", content)
 
+    def _interpret_escapes(self, text: str) -> str:
+        """Interpret \\n, \\t, \\r escapes for multiline support"""
+        # Handle escaped newlines from shlex-parsed quoted strings
+        # User may type "line1\\nline2" -> should become "line1\nline2"
+        # Also handle actual \n already present
+        try:
+            # Use unicode_escape to interpret \n \t etc, but preserve other chars
+            # First replace literal \n that are not already newlines
+            return text.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            # Fallback: simple replace
+            return text.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+
     def _write_file(self, args: list[str]) -> ExecutionResult:
         if len(args) < 2:
             return ExecutionResult(False, "Usage: write <file> <text>")
         path = resolve_path(self.state.workspace, args[0])
-        text = " ".join(args[1:])
+        # Join remaining args with space to support both quoted and unquoted content
+        # With shlex, args[1] may already contain spaces if quoted, so join is safe
+        raw_text = " ".join(args[1:])
+        text = self._interpret_escapes(raw_text)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         self.state.record("write", "success", str(path))
         return ExecutionResult(True, f"Written: {path.relative_to(self.state.workspace.resolve())}")
 
+    def _append_file(self, args: list[str]) -> ExecutionResult:
+        if len(args) < 2:
+            return ExecutionResult(False, "Usage: append <file> <text>")
+        path = resolve_path(self.state.workspace, args[0])
+        raw_text = " ".join(args[1:])
+        text = self._interpret_escapes(raw_text)
+        # Ensure file exists
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Append with newline handling
+        existing = ""
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            # Add newline if needed
+            if existing and not existing.endswith("\n") and not text.startswith("\n"):
+                text = "\n" + text
+        # If file doesn't exist, just write
+        if not path.exists():
+            path.write_text(text, encoding="utf-8")
+        else:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(text)
+        self.state.record("append", "success", str(path))
+        return ExecutionResult(True, f"Appended: {path.relative_to(self.state.workspace.resolve())}")
+
+    def _delete_file(self, args: list[str]) -> ExecutionResult:
+        if not args:
+            return ExecutionResult(False, "Usage: delete <file>")
+        path = resolve_path(self.state.workspace, args[0])
+        if not path.exists():
+            return ExecutionResult(False, f"File not found: {args[0]}")
+        try:
+            if path.is_dir():
+                import shutil
+
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            self.state.record("delete", "success", str(path))
+            return ExecutionResult(True, f"Deleted: {args[0]}")
+        except Exception as e:
+            self.state.record("delete", "failed", f"{path}: {e}")
+            return ExecutionResult(False, f"Failed to delete {args[0]}: {e}")
+
+    def _search_files(self, args: list[str]) -> ExecutionResult:
+        if not args:
+            return ExecutionResult(False, "Usage: search <text> [path]")
+        query = args[0]
+        search_path = self.state.workspace
+        if len(args) > 1:
+            try:
+                search_path = resolve_path(self.state.workspace, args[1])
+            except Exception as e:
+                return ExecutionResult(False, f"Invalid search path: {e}")
+
+        if not search_path.exists():
+            return ExecutionResult(False, f"Search path not found: {search_path}")
+
+        matches = []
+        try:
+            # rglob for all files
+            for file_path in search_path.rglob("*"):
+                if file_path.is_file():
+                    # Skip hidden and large files
+                    try:
+                        if file_path.stat().st_size > 1_000_000:  # 1MB limit
+                            continue
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                        if query.lower() in content.lower():
+                            # Find matching lines
+                            for i, line in enumerate(content.splitlines(), 1):
+                                if query.lower() in line.lower():
+                                    rel = file_path.relative_to(self.state.workspace.resolve())
+                                    matches.append(f"{rel}:{i}: {line.strip()[:200]}")
+                                    if len(matches) >= 50:  # Limit results
+                                        break
+                            if len(matches) >= 50:
+                                break
+                    except Exception:
+                        continue
+        except Exception as e:
+            return ExecutionResult(False, f"Search failed: {e}")
+
+        self.state.record("search", "success", f"{query} in {search_path}")
+        if not matches:
+            return ExecutionResult(True, f"No matches for '{query}'", "")
+        detail = "\n".join(matches)
+        if len(matches) >= 50:
+            detail += "\n...[truncated 50 matches]"
+        return ExecutionResult(True, f"Found {len(matches)} matches for '{query}':", detail)
+
     def _list_files(self, args: list[str]) -> ExecutionResult:
         path = self.state.workspace if not args else resolve_path(self.state.workspace, args[0])
+        if not path.exists():
+            return ExecutionResult(False, f"Path not found: {args[0] if args else '.'}")
         entries = []
         for item in sorted(path.iterdir()):
             suffix = "/" if item.is_dir() else ""
             entries.append(f"{item.name}{suffix}")
         self.state.record("list", "success", str(path))
-        return ExecutionResult(True, f"Listing: {path.relative_to(self.state.workspace.resolve()) if path != self.state.workspace else '.'}", "\n".join(entries))
+        return ExecutionResult(
+            True,
+            f"Listing: {path.relative_to(self.state.workspace.resolve()) if path != self.state.workspace else '.'}",
+            "\n".join(entries) if entries else "(empty)",
+        )
 
     def _run_python(self, args: list[str]) -> ExecutionResult:
         if not args:
