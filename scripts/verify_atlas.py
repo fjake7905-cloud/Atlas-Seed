@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 
-REQUIRED_FILES = [
+# Fallback list used only if manifest missing - manifest is single source of truth
+FALLBACK_REQUIRED_FILES = [
     "ATLAS_RULES.md",
     "atlas.py",
     ".gitignore",
+    "scripts/verify_atlas.py",
+    "scripts/change_guard.py",
     "runtime/__init__.py",
     "runtime/events.py",
     "runtime/state.py",
@@ -58,9 +62,23 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def check_required_files(repo_root: Path) -> list[CheckResult]:
+def load_required_files(repo_root: Path) -> list[str]:
+    """Load required components from atlas_manifest.json - single source of truth"""
+    manifest_path = repo_root / "atlas_manifest.json"
+    if manifest_path.exists():
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            components = data.get("required_components")
+            if isinstance(components, list) and components:
+                return components
+        except Exception as exc:
+            print(f"Warning: failed to load manifest {manifest_path}: {exc}, using fallback", file=sys.stderr)
+    return FALLBACK_REQUIRED_FILES
+
+
+def check_required_files(repo_root: Path, required_files: list[str]) -> list[CheckResult]:
     results: list[CheckResult] = []
-    for rel_path in REQUIRED_FILES:
+    for rel_path in required_files:
         path = repo_root / rel_path
         results.append(CheckResult(name=rel_path, ok=path.exists(), details="present" if path.exists() else "missing"))
     return results
@@ -99,8 +117,12 @@ def main() -> int:
         print(f"Repo root not found: {repo_root}", file=sys.stderr)
         return 2
 
-    file_results = check_required_files(repo_root)
+    required_files = load_required_files(repo_root)
+    file_results = check_required_files(repo_root, required_files)
     marker_results = check_content_markers(repo_root)
+
+    print(f"Loaded {len(required_files)} required components from manifest (single source of truth)")
+    print()
 
     file_report, files_ok = format_results("Required files", file_results)
     marker_report, markers_ok = format_results("Required markers", marker_results)
