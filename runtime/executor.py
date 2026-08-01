@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import subprocess
 import sys
 
-from core.capabilities import resolve_path
+from core.capabilities import CapabilityRegistry, resolve_path
 from core.tools import Tool, ToolRegistry
 from runtime.events import Event
 from runtime.planner import Plan
@@ -24,6 +24,7 @@ class Executor:
         self.state = state
         self.router = Router()
         self.tools = ToolRegistry()
+        self.capabilities = CapabilityRegistry()
         self._register_tools()
 
     def _register_tools(self) -> None:
@@ -36,8 +37,31 @@ class Executor:
         self.tools.register(Tool("run", "Run a Python file.", self._run_python))
         self.tools.register(Tool("memory", "Show recent memory or search it.", self._show_memory))
 
+    def _check_capability_confirmation(self, action: str) -> ExecutionResult | None:
+        """Check if action needs confirmation and if auto_confirm is set"""
+        if self.capabilities.needs_confirmation(action):
+            if not self.state.auto_confirm:
+                # Emit event for confirmation requirement
+                try:
+                    self.state.event_bus.emit(
+                        Event(name="capability.confirm.required", payload={"action": action, "dangerous": True})
+                    )
+                except Exception:
+                    pass
+                return ExecutionResult(
+                    False,
+                    f"Confirmation required for '{action}' (destructive). Use --yes, set ATLAS_AUTO_CONFIRM=1, or confirm interactively.",
+                )
+            else:
+                try:
+                    self.state.event_bus.emit(
+                        Event(name="capability.confirm.auto", payload={"action": action, "auto_confirm": True})
+                    )
+                except Exception:
+                    pass
+        return None
+
     def execute(self, plan: Plan) -> ExecutionResult:
-        # Emit tool execution start event
         try:
             self.state.event_bus.emit(Event(name="tool.started", payload={"action": plan.action, "args": plan.args}))
         except Exception:
@@ -53,6 +77,11 @@ class Executor:
                 pass
             return result
 
+        # Check capability confirmation before execution
+        confirm_result = self._check_capability_confirmation(plan.action)
+        if confirm_result is not None:
+            return confirm_result
+
         try:
             if plan.action == "noop":
                 result = ExecutionResult(True, "No command provided.")
@@ -67,7 +96,6 @@ class Executor:
                     else:
                         result = ExecutionResult(True, str(tool_result))
 
-            # Emit finished event
             try:
                 self.state.event_bus.emit(
                     Event(

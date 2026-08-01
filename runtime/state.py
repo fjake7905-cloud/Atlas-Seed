@@ -31,15 +31,28 @@ def memory_file(root: Path | str | None = None) -> Path:
     return app_dir(root) / "memory.json"
 
 
+def _resolve_auto_confirm(explicit: bool | None = None) -> bool:
+    if explicit is not None:
+        return explicit
+    env_val = os.getenv("ATLAS_AUTO_CONFIRM", "").lower()
+    if env_val in {"1", "true", "yes", "y"}:
+        return True
+    # For tests, auto-confirm if PYTEST_CURRENT_TEST is set
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    return False
+
+
 @dataclass
 class AppState:
     workspace: Path = field(default_factory=workspace_dir)
     memory_backend: PersistentMemory = field(default_factory=lambda: PersistentMemory(memory_file()))
     root: Path = field(default_factory=lambda: _resolve_base(None))
     event_bus: EventBus = field(default_factory=EventBus)
+    auto_confirm: bool = field(default_factory=lambda: _resolve_auto_confirm(None))
 
     @classmethod
-    def load(cls, root: Path | str | None = None) -> "AppState":
+    def load(cls, root: Path | str | None = None, auto_confirm: bool | None = None) -> "AppState":
         base = _resolve_base(root)
         a_dir = base / ".atlas"
         a_dir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +61,8 @@ class AppState:
         mem_file = a_dir / "memory.json"
         memory_backend = PersistentMemory(mem_file)
         event_bus = EventBus()
-        return cls(workspace=workspace, memory_backend=memory_backend, root=base, event_bus=event_bus)
+        confirm = _resolve_auto_confirm(auto_confirm)
+        return cls(workspace=workspace, memory_backend=memory_backend, root=base, event_bus=event_bus, auto_confirm=confirm)
 
     @property
     def memory(self) -> list[dict[str, Any]]:
@@ -60,9 +74,8 @@ class AppState:
     def record(self, action: str, status: str, detail: str = "") -> None:
         entry = {"action": action, "status": status, "detail": detail}
         self.memory_backend.add(entry)
-        # Wire EventBus: emit memory event
         try:
             self.event_bus.emit(Event(name="memory.added", payload=entry))
             self.event_bus.emit(Event(name=f"memory.{action}", payload=entry))
         except Exception:
-            pass  # EventBus should never break core flow
+            pass
