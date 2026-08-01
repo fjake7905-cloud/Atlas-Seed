@@ -15,12 +15,27 @@ class BaseAgent:
     planner: Planner
     executor: Executor
 
+    def __post_init__(self):
+        # Wire model provider to planner if available (Task 17)
+        if self.state.model_provider is not None:
+            try:
+                self.planner.model_provider = self.state.model_provider
+            except Exception:
+                pass
+
     def handle(self, raw: str) -> ExecutionResult:
+        # Ensure planner has latest provider (in case state provider changed)
+        if self.state.model_provider is not None:
+            try:
+                self.planner.model_provider = self.state.model_provider
+            except Exception:
+                pass
+
         plan = self.planner.plan(raw)
         task = Task(raw=raw, action=plan.action, args=plan.args)
         self.state.record("task_created", "success", task.action)
         try:
-            self.state.event_bus.emit(Event(name="task.created", payload={"raw": raw, "action": plan.action, "args": plan.args}))
+            self.state.event_bus.emit(Event(name="task.created", payload={"raw": raw, "action": plan.action, "args": plan.args, "confidence": getattr(plan, "confidence", 1.0), "source": getattr(plan, "source", "rule")}))
             self.state.event_bus.emit(Event(name=f"task.{plan.action}.created", payload={"raw": raw}))
         except Exception:
             pass
