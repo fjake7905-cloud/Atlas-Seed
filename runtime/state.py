@@ -8,6 +8,9 @@ from typing import Any
 from runtime.events import Event, EventBus
 from runtime.memory import PersistentMemory
 
+# Model provider is optional to avoid circular imports, imported lazily
+# from core.model_provider import ModelProvider, get_default_provider
+
 
 def _resolve_base(root: Path | str | None = None) -> Path:
     """Resolve base dir: explicit root > ATLAS_ROOT env > cwd"""
@@ -37,7 +40,6 @@ def _resolve_auto_confirm(explicit: bool | None = None) -> bool:
     env_val = os.getenv("ATLAS_AUTO_CONFIRM", "").lower()
     if env_val in {"1", "true", "yes", "y"}:
         return True
-    # For tests, auto-confirm if PYTEST_CURRENT_TEST is set
     if os.getenv("PYTEST_CURRENT_TEST"):
         return True
     return False
@@ -50,6 +52,7 @@ class AppState:
     root: Path = field(default_factory=lambda: _resolve_base(None))
     event_bus: EventBus = field(default_factory=EventBus)
     auto_confirm: bool = field(default_factory=lambda: _resolve_auto_confirm(None))
+    model_provider: Any = field(default=None)
 
     @classmethod
     def load(cls, root: Path | str | None = None, auto_confirm: bool | None = None) -> "AppState":
@@ -62,7 +65,23 @@ class AppState:
         memory_backend = PersistentMemory(mem_file)
         event_bus = EventBus()
         confirm = _resolve_auto_confirm(auto_confirm)
-        return cls(workspace=workspace, memory_backend=memory_backend, root=base, event_bus=event_bus, auto_confirm=confirm)
+
+        # Lazy import model provider to avoid circular
+        try:
+            from core.model_provider import get_default_provider
+
+            provider = get_default_provider()
+        except Exception:
+            provider = None
+
+        return cls(
+            workspace=workspace,
+            memory_backend=memory_backend,
+            root=base,
+            event_bus=event_bus,
+            auto_confirm=confirm,
+            model_provider=provider,
+        )
 
     @property
     def memory(self) -> list[dict[str, Any]]:

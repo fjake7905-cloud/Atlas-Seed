@@ -73,7 +73,84 @@ class Executor:
 
         route = self.router.route(plan)
         if route.target == "chat":
-            self.state.record(plan.action, "needs-model", plan.args[0] if plan.args else "")
+            # Try to use model provider if available (Phase 8 Intelligence)
+            raw_input = plan.args[0] if plan.args else ""
+            if self.state.model_provider is not None:
+                try:
+                    from core.context_builder import build_context
+
+                    context = build_context(
+                        workspace=self.state.workspace,
+                        memory_items=self.state.memory,
+                        task=raw_input,
+                    )
+                    # Emit event for model call
+                    try:
+                        self.state.event_bus.emit(
+                            Event(name="model.called", payload={"provider": self.state.model_provider.name, "task": raw_input})
+                        )
+                    except Exception:
+                        pass
+
+                    response = self.state.model_provider.complete(raw_input, context=context)
+
+                    # Check if response is JSON tool call
+                    text = response.text.strip()
+                    if text.startswith("{") and '"action"' in text and '"args"' in text:
+                        try:
+                            import json
+
+                            tool_call = json.loads(text)
+                            action = tool_call.get("action")
+                            args = tool_call.get("args", [])
+                            if isinstance(action, str) and isinstance(args, list):
+                                self.state.record("model_tool_call", "success", f"{action} {args}")
+                                # Recursively execute the tool call
+                                tool_plan = Plan(action=action, args=args)
+                                # Check confirmation for tool call
+                                confirm = self._check_capability_confirmation(action)
+                                if confirm is not None:
+                                    return confirm
+                                tool = self.tools.get(action)
+                                if tool:
+                                    tool_result = self.tools.execute(action, args)
+                                    if isinstance(tool_result, ExecutionResult):
+                                        result = tool_result
+                                    else:
+                                        result = ExecutionResult(True, str(tool_result))
+                                    try:
+                                        self.state.event_bus.emit(
+                                            Event(name="model.tool_executed", payload={"action": action, "success": result.success})
+                                        )
+                                    except Exception:
+                                        pass
+                                    return result
+                        except Exception:
+                            # Not valid JSON tool call, treat as natural language
+                            pass
+
+                    # Natural language response from model
+                    self.state.record("model_response", "success", f"{self.state.model_provider.name}: {text[:100]}")
+                    result = ExecutionResult(True, text)
+                    try:
+                        self.state.event_bus.emit(
+                            Event(name="model.response", payload={"provider": self.state.model_provider.name, "success": True})
+                        )
+                    except Exception:
+                        pass
+                    return result
+                except Exception as e:
+                    # Model provider failed, fallback to needs-model
+                    self.state.record("model_error", "failed", str(e))
+                    result = ExecutionResult(False, f"Model error ({self.state.model_provider.name}): {e}. Atlas needs a model for that request: {raw_input[:100]}")
+                    try:
+                        self.state.event_bus.emit(Event(name="model.failed", payload={"error": str(e)}))
+                    except Exception:
+                        pass
+                    return result
+
+            # No provider available
+            self.state.record(plan.action, "needs-model", raw_input)
             result = ExecutionResult(False, "Atlas needs a model for that request.")
             try:
                 self.state.event_bus.emit(Event(name="tool.finished", payload={"action": plan.action, "success": False, "reason": "needs-model"}))
