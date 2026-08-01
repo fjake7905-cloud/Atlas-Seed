@@ -1,6 +1,6 @@
 [project]
 name = "atlas-seed"
-version = "0.5"
+version = "0.6"
 description = "Initial bootstrap for the Atlas autonomous agent platform"
 readme = "README.md"
 requires-python = ">=3.10"
