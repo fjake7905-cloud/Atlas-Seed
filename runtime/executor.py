@@ -313,10 +313,24 @@ class Executor:
         return ExecutionResult(True, f"Read: {path.relative_to(self.state.workspace.resolve())}", content)
 
     def _interpret_escapes(self, text: str) -> str:
-        try:
-            return text.encode("utf-8").decode("unicode_escape")
-        except Exception:
-            return text.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+        """Interpret \\n, \\t, \\r, \\ etc preserving unicode and embedded quotes"""
+        # Preserve unicode - only replace known escape sequences, don't use unicode_escape which mangles utf-8
+        # Handle \\ first with placeholder to avoid double replacement
+        placeholder = "\0BACKSLASH\0"
+        # Protect escaped backslashes
+        text = text.replace("\\\\", placeholder)
+        # Replace common escapes
+        text = text.replace("\\n", "\n")
+        text = text.replace("\\t", "\t")
+        text = text.replace("\\r", "\r")
+        text = text.replace("\\b", "\b")
+        text = text.replace("\\f", "\f")
+        text = text.replace("\\v", "\v")
+        # Restore placeholder as single backslash
+        text = text.replace(placeholder, "\\")
+        # Note: we intentionally do NOT strip quotes here - planner already handled outer wrapper stripping
+        # and we want to preserve embedded quotes like ' and " inside content
+        return text
 
     def _write_file(self, args: list[str]) -> ExecutionResult:
         if len(args) < 2:
