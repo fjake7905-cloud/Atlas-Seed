@@ -132,7 +132,6 @@ class Executor:
         return ExecutionResult(True, "Current workspace:", str(self.state.workspace.resolve()))
 
     def _workspace_list(self, args: list[str]) -> ExecutionResult:
-        # List subfolders inside workspace
         base = self.state.workspace
         if args:
             try:
@@ -146,7 +145,6 @@ class Executor:
             if item.is_dir():
                 entries.append(f"{item.name}/")
         if not entries:
-            # Also list files if no dirs?
             for item in sorted(base.iterdir()):
                 suffix = "/" if item.is_dir() else ""
                 entries.append(f"{item.name}{suffix}")
@@ -162,9 +160,7 @@ class Executor:
             return ExecutionResult(False, f"Workspace not found: {args[0]}")
         if path.resolve() == self.state.workspace.resolve():
             return ExecutionResult(False, "Cannot delete root workspace")
-        # Safety: only delete if inside workspace
         try:
-            # Recursively delete
             import shutil
 
             if path.is_dir():
@@ -196,24 +192,15 @@ class Executor:
         return ExecutionResult(True, f"Read: {path.relative_to(self.state.workspace.resolve())}", content)
 
     def _interpret_escapes(self, text: str) -> str:
-        """Interpret \\n, \\t, \\r escapes for multiline support"""
-        # Handle escaped newlines from shlex-parsed quoted strings
-        # User may type "line1\\nline2" -> should become "line1\nline2"
-        # Also handle actual \n already present
         try:
-            # Use unicode_escape to interpret \n \t etc, but preserve other chars
-            # First replace literal \n that are not already newlines
             return text.encode("utf-8").decode("unicode_escape")
         except Exception:
-            # Fallback: simple replace
             return text.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
 
     def _write_file(self, args: list[str]) -> ExecutionResult:
         if len(args) < 2:
             return ExecutionResult(False, "Usage: write <file> <text>")
         path = resolve_path(self.state.workspace, args[0])
-        # Join remaining args with space to support both quoted and unquoted content
-        # With shlex, args[1] may already contain spaces if quoted, so join is safe
         raw_text = " ".join(args[1:])
         text = self._interpret_escapes(raw_text)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,16 +214,12 @@ class Executor:
         path = resolve_path(self.state.workspace, args[0])
         raw_text = " ".join(args[1:])
         text = self._interpret_escapes(raw_text)
-        # Ensure file exists
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Append with newline handling
         existing = ""
         if path.exists():
             existing = path.read_text(encoding="utf-8")
-            # Add newline if needed
             if existing and not existing.endswith("\n") and not text.startswith("\n"):
                 text = "\n" + text
-        # If file doesn't exist, just write
         if not path.exists():
             path.write_text(text, encoding="utf-8")
         else:
@@ -274,27 +257,22 @@ class Executor:
                 search_path = resolve_path(self.state.workspace, args[1])
             except Exception as e:
                 return ExecutionResult(False, f"Invalid search path: {e}")
-
         if not search_path.exists():
             return ExecutionResult(False, f"Search path not found: {search_path}")
-
         matches = []
         try:
-            # rglob for all files
             for file_path in search_path.rglob("*"):
                 if file_path.is_file():
-                    # Skip hidden and large files
                     try:
-                        if file_path.stat().st_size > 1_000_000:  # 1MB limit
+                        if file_path.stat().st_size > 1_000_000:
                             continue
                         content = file_path.read_text(encoding="utf-8", errors="ignore")
                         if query.lower() in content.lower():
-                            # Find matching lines
                             for i, line in enumerate(content.splitlines(), 1):
                                 if query.lower() in line.lower():
                                     rel = file_path.relative_to(self.state.workspace.resolve())
                                     matches.append(f"{rel}:{i}: {line.strip()[:200]}")
-                                    if len(matches) >= 50:  # Limit results
+                                    if len(matches) >= 50:
                                         break
                             if len(matches) >= 50:
                                 break
@@ -302,7 +280,6 @@ class Executor:
                         continue
         except Exception as e:
             return ExecutionResult(False, f"Search failed: {e}")
-
         self.state.record("search", "success", f"{query} in {search_path}")
         if not matches:
             return ExecutionResult(True, f"No matches for '{query}'", "")
@@ -371,18 +348,97 @@ class Executor:
             return ExecutionResult(False, f"Error running {path.relative_to(self.state.workspace.resolve())}: {exc}")
 
     def _show_memory(self, args: list[str]) -> ExecutionResult:
-        if args and args[0].lower() in {"search", "find"}:
-            if len(args) < 2:
-                return ExecutionResult(False, "Usage: memory search <text>")
-            query = " ".join(args[1:]).strip()
-            matches = self.state.memory_backend.search(query)
-            lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in matches[-20:]]
-            self.state.record("memory_search", "success", query)
-            return ExecutionResult(True, f"Memory search: {query}", "\n".join(lines) if lines else "No matches.")
+        # Handle various memory subcommands
+        if not args:
+            # Recent 20
+            lines = [
+                f"[{entry.get('id','')} {entry.get('timestamp','')[:19]}] {entry['action']}: {entry['status']} - {entry.get('detail','')}"
+                for entry in self.state.memory[-20:]
+            ]
+            self.state.record("memory", "success", "limit=20")
+            return ExecutionResult(True, "Recent memory (20):", "\n".join(lines) if lines else "No memory yet.")
 
-        limit = 20
-        if args and args[0].isdigit():
-            limit = max(1, int(args[0]))
-        lines = [f"{entry['action']}: {entry['status']} - {entry.get('detail', '')}" for entry in self.state.memory[-limit:]]
-        self.state.record("memory", "success", f"limit={limit}")
-        return ExecutionResult(True, "Recent memory:", "\n".join(lines) if lines else "No memory yet.")
+        sub = args[0].lower()
+
+        if sub in {"search", "find"}:
+            if len(args) < 2:
+                return ExecutionResult(False, "Usage: memory search <text> [limit]")
+            query = " ".join(args[1:]).strip()
+            # Check if last arg is digit for limit
+            limit = 20
+            parts = query.split()
+            if parts and parts[-1].isdigit():
+                try:
+                    limit = max(1, int(parts[-1]))
+                    query = " ".join(parts[:-1])
+                except Exception:
+                    pass
+            matches = self.state.memory_backend.search(query)
+            # Show with id and timestamp
+            lines = [
+                f"[{e.get('id','')} {e.get('timestamp','')[:19]}] {e['action']}: {e['status']} - {e.get('detail','')}"
+                for e in matches[-limit:]
+            ]
+            self.state.record("memory_search", "success", query)
+            return ExecutionResult(True, f"Memory search: '{query}' (last {limit} of {len(matches)} matches)", "\n".join(lines) if lines else "No matches.")
+
+        if sub in {"clear", "reset", "wipe"}:
+            # Dangerous, but allow with auto_confirm
+            if not self.state.auto_confirm:
+                return ExecutionResult(
+                    False,
+                    "Confirmation required for 'memory clear' (deletes all memory). Use --yes or ATLAS_AUTO_CONFIRM=1",
+                )
+            count = self.state.memory_backend.clear()
+            self.state.record("memory_clear", "success", f"cleared {count}")
+            return ExecutionResult(True, f"Memory cleared: {count} entries removed")
+
+        if sub in {"stats", "stat", "info"}:
+            stats = self.state.memory_backend.stats()
+            detail = (
+                f"Total: {stats['total']}\n"
+                f"Session: {stats['session_id']}\n"
+                f"Oldest: {stats['oldest']}\n"
+                f"Newest: {stats['newest']}\n"
+                f"Actions: {stats['actions']}"
+            )
+            self.state.record("memory_stats", "success", f"total={stats['total']}")
+            return ExecutionResult(True, "Memory stats:", detail)
+
+        if sub in {"export", "save", "backup"}:
+            export_path = None
+            if len(args) > 1:
+                try:
+                    export_path = resolve_path(self.state.workspace, args[1])
+                except Exception:
+                    export_path = Path(args[1])
+            saved = self.state.memory_backend.export(export_path)
+            self.state.record("memory_export", "success", str(saved))
+            return ExecutionResult(True, f"Memory exported to: {saved}")
+
+        if sub in {"prune", "trim", "clean"}:
+            keep = 100
+            if len(args) > 1 and args[1].isdigit():
+                keep = max(1, int(args[1]))
+            pruned = self.state.memory_backend.prune(keep_last=keep)
+            self.state.record("memory_prune", "success", f"pruned {pruned}, kept {keep}")
+            return ExecutionResult(True, f"Memory pruned: {pruned} removed, kept last {keep}")
+
+        if sub.isdigit():
+            limit = max(1, int(sub))
+            lines = [
+                f"[{entry.get('id','')} {entry.get('timestamp','')[:19]}] {entry['action']}: {entry['status']} - {entry.get('detail','')}"
+                for entry in self.state.memory[-limit:]
+            ]
+            self.state.record("memory", "success", f"limit={limit}")
+            return ExecutionResult(True, f"Recent memory ({limit}):", "\n".join(lines) if lines else "No memory yet.")
+
+        # Unknown subcommand -> treat as search
+        query = " ".join(args).strip()
+        matches = self.state.memory_backend.search(query)
+        lines = [
+            f"[{e.get('id','')} {e.get('timestamp','')[:19]}] {e['action']}: {e['status']} - {e.get('detail','')}"
+            for e in matches[-20:]
+        ]
+        self.state.record("memory_search", "success", query)
+        return ExecutionResult(True, f"Memory search: '{query}'", "\n".join(lines) if lines else "No matches.")
