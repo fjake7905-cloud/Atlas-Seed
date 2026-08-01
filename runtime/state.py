@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from runtime.events import Event, EventBus
 from runtime.memory import PersistentMemory
 
 
@@ -35,6 +36,7 @@ class AppState:
     workspace: Path = field(default_factory=workspace_dir)
     memory_backend: PersistentMemory = field(default_factory=lambda: PersistentMemory(memory_file()))
     root: Path = field(default_factory=lambda: _resolve_base(None))
+    event_bus: EventBus = field(default_factory=EventBus)
 
     @classmethod
     def load(cls, root: Path | str | None = None) -> "AppState":
@@ -45,7 +47,8 @@ class AppState:
         workspace.mkdir(parents=True, exist_ok=True)
         mem_file = a_dir / "memory.json"
         memory_backend = PersistentMemory(mem_file)
-        return cls(workspace=workspace, memory_backend=memory_backend, root=base)
+        event_bus = EventBus()
+        return cls(workspace=workspace, memory_backend=memory_backend, root=base, event_bus=event_bus)
 
     @property
     def memory(self) -> list[dict[str, Any]]:
@@ -55,4 +58,11 @@ class AppState:
         self.memory_backend.save()
 
     def record(self, action: str, status: str, detail: str = "") -> None:
-        self.memory_backend.add({"action": action, "status": status, "detail": detail})
+        entry = {"action": action, "status": status, "detail": detail}
+        self.memory_backend.add(entry)
+        # Wire EventBus: emit memory event
+        try:
+            self.event_bus.emit(Event(name="memory.added", payload=entry))
+            self.event_bus.emit(Event(name=f"memory.{action}", payload=entry))
+        except Exception:
+            pass  # EventBus should never break core flow
