@@ -23,7 +23,8 @@
     "tests/test_runtime.py",
     "tests/test_tools.py",
     "tests/test_memory.py",
-    "tests/test_agent_core.py"
+    "tests/test_agent_core.py",
+    "tests/test_security.py"
   ],
   "verification_policy": {
     "every_new_feature_requires": [
