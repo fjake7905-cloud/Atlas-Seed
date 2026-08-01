@@ -1,0 +1,10 @@
+# Atlas-Seed minimal requirements
+# No external dependencies for core runtime (uses stdlib only)
+# Dev/test dependencies are in pyproject.toml [project.optional-dependencies]
+
+# For manual pip install:
+# pip install -e .           # core (no deps)
+# pip install -e .[dev]      # with pytest, pylint
+# pip install -e .[test]     # with pytest
+
+# Empty for now, but kept for compatibility with tools expecting requirements.txt

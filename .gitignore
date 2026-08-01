@@ -7,3 +7,10 @@ workspace/
 .idea/
 .vscode/
 .DS_Store
+.atlas/
+*.log
+*.egg-info/
+dist/
+build/
+notification_config.json
+reports/

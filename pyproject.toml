@@ -1,0 +1,64 @@
+[project]
+name = "atlas-seed"
+version = "0.5"
+description = "Initial bootstrap for the Atlas autonomous agent platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Atlas-Seed", email = "fjake7905-cloud@users.noreply.github.com"}
+]
+keywords = ["agent", "autonomous", "atlas", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pylint>=2.15",
+]
+test = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fjake7905-cloud/Atlas-Seed"
+Repository = "https://github.com/fjake7905-cloud/Atlas-Seed"
+Issues = "https://github.com/fjake7905-cloud/Atlas-Seed/issues"
+
+[project.scripts]
+atlas = "atlas:main"
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["core", "core.*", "agents", "agents.*", "runtime", "runtime.*"]
+exclude = ["tests", "tests.*", "reports", "reports.*", "workspace", "workspace.*", "scripts", "scripts.*", ".atlas", ".atlas.*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.pylint.MAIN]
+disable = [
+    "missing-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+]
+
+[tool.pylint.FORMAT]
+max-line-length = 100
+
+[tool.pylint.DESIGN]
+max-args = 7
+max-attributes = 10
